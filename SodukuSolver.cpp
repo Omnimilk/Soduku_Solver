@@ -1,27 +1,44 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
+#include <queue>
 #include <fstream>
 
 #define BOUNDARY "-------------------------"
 
 typedef std::vector<std::vector<int>> Map;
 typedef std::vector<std::vector<std::vector<int>>> PossibilityMap;
-typedef std::vector<std::vector<std::vector<int>>> VacancyMap;
+
+template<typename T, typename priority_t>
+struct PriorityQueue {
+    typedef std::pair<priority_t, T> PQElement;
+    std::priority_queue<PQElement, std::vector<PQElement>,std::greater<PQElement> > elements;
+
+    inline bool empty() const { return elements.empty(); }
+
+    inline void put(T item, priority_t priority) {
+        elements.emplace(priority, item);
+    }
+
+    inline T get() {
+        T best_item = elements.top().second;
+        elements.pop();
+        return best_item;
+    }
+};
 
 class SodukuSolver{
 private:
 	Map map;
 	bool initialized = false;
 	PossibilityMap possiblityMap;
-    VacancyMap vacancyMap;
-
+    PriorityQueue<int, int> cellsToBeExaminated;
 	Map result;
 
 	bool is_solved(){
 		if(initialized){
 			for(int i = 0; i<9; i++){
-				for(int j = 0; j<0; j++){
+				for(int j = 0; j<9; j++){
 					if(possiblityMap[i][j].size()!=1){
 						return false;
 					}
@@ -68,75 +85,7 @@ private:
 		return is_legal_rowwise(row,col,val,curMap) && is_legal_colwise(row,col,val,curMap) && is_legal_districtwise(row,col,val,curMap);
 	}
 
-    std::vector<int> vacancy_rowwise(int row, int col, Map& curMap){
-        std::vector<int> vacancy_candidate = {1,2,3,4,5,6,7,8,9};
-        std::vector<int> taboo;
-        for(int i = 0; i<9;i++){
-            if(curMap[row][i]>0){
-               taboo.push_back(curMap[row][i]);
-            }
-        }
-        std::sort(taboo.begin(),taboo.end());
-        std::vector<int> vacancy(9);
-        std::vector<int>::iterator it;
-        it = std::set_difference(vacancy_candidate.begin(),vacancy_candidate.end(),taboo.begin(),taboo.end(),vacancy.begin());
-        vacancy.resize(it - vacancy.begin());
-        return vacancy;
-    }
-
-    std::vector<int> vacancy_colwise(int row, int col, Map& curMap){
-        std::vector<int> vacancy_candidate = {1,2,3,4,5,6,7,8,9};
-        std::vector<int> taboo;
-        for(int i = 0; i<9;i++){
-            if(curMap[i][col]>0){
-                taboo.push_back(curMap[i][col]);
-            }
-        }
-        std::sort(taboo.begin(),taboo.end());
-        std::vector<int> vacancy(9);
-        std::vector<int>::iterator it;
-        it = std::set_difference(vacancy_candidate.begin(),vacancy_candidate.end(),taboo.begin(),taboo.end(),vacancy.begin());
-        vacancy.resize(it - vacancy.begin());
-        return vacancy;
-    }
-
-    std::vector<int> vacancy_districtwise(int row, int col, Map& curMap){
-        std::vector<int> vacancy_candidate = {1,2,3,4,5,6,7,8,9};
-        std::vector<int> taboo;
-        std::vector<int> districtInfo = get_district_info(row,col);//rowStart,rowEnd,colStart,colEnd
-        for(int i = districtInfo[0]; i<=districtInfo[1]; i++){
-            for(int j = districtInfo[2]; j<=districtInfo[3]; j++){
-                if(curMap[i][j]>0){
-                    taboo.push_back(curMap[i][j]);
-                }
-            }
-        }
-        std::sort(taboo.begin(),taboo.end());
-        std::vector<int> vacancy(9);
-        std::vector<int>::iterator it;
-        it = std::set_difference(vacancy_candidate.begin(),vacancy_candidate.end(),taboo.begin(),taboo.end(),vacancy.begin());
-        vacancy.resize(it - vacancy.begin());
-        return vacancy;
-    }
-
-    std::vector<int> vacancy(int row, int col, Map& curMap){
-        std::vector<int> rowVancancy = vacancy_rowwise(row,col,curMap);
-        std::vector<int> colVancancy = vacancy_colwise(row,col,curMap);
-        std::vector<int> districtVancancy = vacancy_districtwise(row,col,curMap);
-
-        std::vector<int> row_and_col_Vacancies(9);
-        std::vector<int>::iterator it;
-        it = std::set_union(rowVancancy.begin(),rowVancancy.end(),colVancancy.begin(),colVancancy.end(),row_and_col_Vacancies.begin());
-        row_and_col_Vacancies.resize(it - row_and_col_Vacancies.begin());
-
-        std::vector<int> allVacancies(9);
-        std::vector<int>::iterator it1;
-        it1 = std::set_union(row_and_col_Vacancies.begin(),row_and_col_Vacancies.end(),districtVancancy.begin(),districtVancancy.end(),allVacancies.begin());
-        allVacancies.resize(it1 - allVacancies.begin());
-        return  allVacancies;
-    }
-
-	void do_elimination(int row,int col, Map& curMap){
+	void do_elimination_for_cell(int row,int col, Map& curMap){
 		//std::vector<int> temp_potential = possiblityMap[row][col];
 		for(std::vector<int>::iterator i = possiblityMap[row][col].begin();i<possiblityMap[row][col].end();){
 			if(!is_legal(row,col,(*i),curMap)){
@@ -145,7 +94,119 @@ private:
 				i++;
 			}
 		}
+        cellsToBeExaminated.put(row*9 + col, possiblityMap[row][col].size());
 	}
+
+    void do_combinational_elimination_rowwise(int row, int col, Map& curMap){
+        //TODO:combine with col and district?
+        std::vector<int> possibilities_in_other_cells(9);
+        std::vector<int>::iterator it = possibilities_in_other_cells.begin();
+        for(int i = 0;i<9;i++){
+            if(i!=col){
+                std::vector<int> possibilities_in_prev_cells(possibilities_in_other_cells.begin(),it);
+                it = std::set_union(possiblityMap[row][i].begin(),possiblityMap[row][i].end(), possibilities_in_prev_cells.begin(),possibilities_in_prev_cells.end(),possibilities_in_other_cells.begin());
+            }
+        }
+        possibilities_in_other_cells.resize(it - possibilities_in_other_cells.begin());
+
+        if(possibilities_in_other_cells.size()<8){
+            std::cout<<"Possibilities in other cells(rowwise) is less than 8, unsolvable! Cell: ["<<row<<", "<<col<<"]."<<std::endl;
+            exit(1);
+        }else if(possibilities_in_other_cells.size()==8){
+            std::vector<int> complete_set = {1,2,3,4,5,6,7,8,9};
+            std::vector<int> left_set(9);
+            std::vector<int>::iterator it;
+            it = std::set_difference(complete_set.begin(),complete_set.end(),possibilities_in_other_cells.begin(),possibilities_in_other_cells.end(),left_set.begin());
+            left_set.resize(it-left_set.begin());
+            if(left_set.size()!=1){
+                std::cout<<"??????????????????????????????????"<<std::endl;
+            } else{
+                map[row][col] = left_set[0];
+                std::cout<<"Setting cell ["<<row<<", "<<col<<"] with value "<<left_set[0]<<std::endl;
+            }
+
+        }else{
+            //no finding
+        }
+        return;
+    }
+
+    void do_combinational_elimination_colwise(int row, int col, Map& curMap){
+        std::vector<int> possibilities_in_other_cells(9);
+        std::vector<int>::iterator it = possibilities_in_other_cells.begin();
+        for(int i = 0;i<9;i++){
+            if(i!=row){
+                std::vector<int> possibilities_in_prev_cells(possibilities_in_other_cells.begin(),it);
+                it = std::set_union(possiblityMap[i][col].begin(),possiblityMap[i][col].end(), possibilities_in_prev_cells.begin(),possibilities_in_prev_cells.end(),possibilities_in_other_cells.begin());
+            }
+        }
+        possibilities_in_other_cells.resize(it - possibilities_in_other_cells.begin());
+
+        if(possibilities_in_other_cells.size()<8){
+            std::cout<<"Possibilities in other cells(colwise) is less than 8, unsolvable! Cell: ["<<row<<", "<<col<<"]."<<std::endl;
+            exit(1);
+        }else if(possibilities_in_other_cells.size()==8){
+            std::vector<int> complete_set = {1,2,3,4,5,6,7,8,9};
+            std::vector<int> left_set(9);
+            std::vector<int>::iterator it;
+            it = std::set_difference(complete_set.begin(),complete_set.end(),possibilities_in_other_cells.begin(),possibilities_in_other_cells.end(),left_set.begin());
+            left_set.resize(it-left_set.begin());
+            if(left_set.size()!=1){
+                std::cout<<"??????????????????????????????????"<<std::endl;
+            } else{
+                map[row][col] = left_set[0];
+                std::cout<<"Setting cell ["<<row<<", "<<col<<"] with value "<<left_set[0]<<std::endl;
+            }
+
+        }else{
+            //no finding
+        }
+        return;
+    }
+
+    void do_combinational_elimination_districtwise(int row, int col, Map& curMap){
+        std::vector<int> possibilities_in_other_cells(9);
+        std::vector<int>::iterator it = possibilities_in_other_cells.begin();
+        std::vector<int> districtInfo = get_district_info(row,col);//rowStart,rowEnd,colStart,colEnd
+        for(int i = districtInfo[0]; i<=districtInfo[1]; i++){
+            for(int j = districtInfo[2]; j<=districtInfo[3]; j++){
+                if(!(i==row && j==col)){
+                    std::vector<int> possibilities_in_prev_cells(possibilities_in_other_cells.begin(),it);
+                    it = std::set_union(possiblityMap[i][col].begin(),possiblityMap[i][col].end(), possibilities_in_prev_cells.begin(),possibilities_in_prev_cells.end(),possibilities_in_other_cells.begin());
+                }
+            }
+        }
+        possibilities_in_other_cells.resize(it - possibilities_in_other_cells.begin());
+
+        if(possibilities_in_other_cells.size()<8){
+            std::cout<<"Possibilities in other cells(colwise) is less than 8, unsolvable! Cell: ["<<row<<", "<<col<<"]."<<std::endl;
+            exit(1);
+
+        }else if(possibilities_in_other_cells.size()==8){
+            std::vector<int> complete_set = {1,2,3,4,5,6,7,8,9};
+            std::vector<int> left_set(9);
+            std::vector<int>::iterator it;
+            it = std::set_difference(complete_set.begin(),complete_set.end(),possibilities_in_other_cells.begin(),possibilities_in_other_cells.end(),left_set.begin());
+            left_set.resize(it-left_set.begin());
+            if(left_set.size()!=1){
+                std::cout<<"??????????????????????????????????"<<std::endl;
+            } else{
+                map[row][col] = left_set[0];
+                std::cout<<"Setting cell ["<<row<<", "<<col<<"] with value "<<left_set[0]<<std::endl;
+            }
+
+        }else{
+            //no finding
+        }
+        return;
+    }
+
+    void do_combinational_elimination_for_cell(int row, int col, Map& curMap){
+        do_combinational_elimination_rowwise(row,col,curMap);
+        do_combinational_elimination_colwise(row,col,curMap);
+        do_combinational_elimination_districtwise(row,col,curMap);
+        return;
+    }
 
 	bool read_in_map(std::string filename){
 		std::ifstream map_file(filename);
@@ -211,6 +272,7 @@ private:
 						possiblityMap[i][j] = prob;
 					} else{
 						possiblityMap[i][j] = potential_values;
+
 					}
 				}
 			}
@@ -219,21 +281,12 @@ private:
 		}
 	}
 
-    void build_vacancy_map(){
-        if(initialized){
-            for(int i = 0; i<9; i++){
-                for(int j = 0; j<9; j++){
-                    if(map[i][j] != 0){
-                        std::vector<int> prob = {map[i][j]};
-                        vacancyMap[i][j] = prob;
-                    } else{
-                        std::vector<int> vacancies = vacancy(i,j,map);
-                        vacancyMap[i][j] = vacancies;
-                    }
-                }
+    void do_elimination(){
+        cellsToBeExaminated.empty();
+        for(int i = 0;i<9;i++){
+            for(int j = 0;j<9;j++){
+                if(map[i][j]==0){ do_elimination_for_cell(i,j,map);}
             }
-        } else{
-            std::cout<<"Initialize Soduku map first!"<<std::endl;
         }
     }
 
@@ -241,13 +294,11 @@ public:
 	SodukuSolver(std::string filename){
 		map = Map(9,std::vector<int>(9));
 		possiblityMap = PossibilityMap(9,std::vector<std::vector<int>>(9,std::vector<int>(9)));
-        vacancyMap = VacancyMap(9,std::vector<std::vector<int>>(9,std::vector<int>(9)));
 		initialized = read_in_map(filename);
 
 		if(initialized){
 			std::cout<<"map initialized successfully"<<std::endl;
 			build_possibility_map();
-            build_vacancy_map();
 		} else{
 			std::cout<<"map initialization failed"<<std::endl;
 			exit(1);
@@ -255,16 +306,15 @@ public:
 	}
 
 	void solve(){
-		for(int i = 0;i<9;i++){
-			for(int j = 0;j<9;j++){
-				do_elimination(i,j,map);
-			}
-		}
 		//TODO: add heuristic for doing combination emilination
         //naive try: try all combinations after elimination
-//        while(!is_solved()){
-//
-//        }
+        while(!is_solved()){
+            do_elimination();
+            int cell_code = cellsToBeExaminated.get();
+            int row = cell_code/9;
+            int col = cell_code%9;
+            do_combinational_elimination_for_cell(row,col,map);
+        }
 	}
 
 	void print_sol(){
@@ -297,28 +347,14 @@ public:
 		}
 		return;
 	}
-
-    void print_vacancy_map(){
-        for(int i = 0; i < 9; i++){
-            for(int j = 0; j < 9; j++){
-                std::cout<<"cell "<< i+1 <<" "<<j+1<<": ";
-                for(int k = 0; k<vacancyMap[i][j].size(); k++){
-                    std::cout<< vacancyMap[i][j][k]<< " ";
-                }
-                std::cout<<std::endl;
-            }
-
-        }
-        return;
-    }
 };
 
 int main(){
 	SodukuSolver sodukuSolver("map.txt");
-//	sodukuSolver.print_sol();
+    sodukuSolver.print_sol();
+    sodukuSolver.print_possibility_map();
 	sodukuSolver.solve();
-//	sodukuSolver.print_possibility_map();
-   sodukuSolver.print_vacancy_map();
+
 	return 0;
 
 }
